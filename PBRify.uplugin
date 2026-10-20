@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "PBRify",
+	"Description": "Turn any image into a PBR material (base color, normal, height, ORM) with parallax depth. Right-click a texture in the Content Browser and choose PBRify.",
+	"Category": "Editor",
+	"CreatedBy": "Fallen Signal Studios",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "PBRify",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}
