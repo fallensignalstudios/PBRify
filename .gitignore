@@ -1,0 +1,17 @@
+# Unreal build output
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.sln
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Standalone core tests
+Tests/Build/
