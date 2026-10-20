@@ -15,8 +15,8 @@ namespace PBRifyMaterialBuilder
 	 */
 	UMaterial* FindOrCreateMasterMaterial(const FString& MasterMaterialPath, const FPBRifyResult& DefaultTextures, FText& OutError);
 
-	/** Creates (or updates) a material instance of Master that uses the given textures. */
+	/** Creates a material instance of Master that uses the given textures, or updates the existing one if bUpdateExisting. */
 	UMaterialInstanceConstant* CreateOrUpdateInstance(
 		UMaterial* Master, const FString& PackagePath, const FString& DesiredName,
-		const FPBRifyResult& Textures, float ParallaxDepth, FText& OutError);
+		const FPBRifyResult& Textures, float ParallaxDepth, bool bUpdateExisting, FText& OutError);
 }

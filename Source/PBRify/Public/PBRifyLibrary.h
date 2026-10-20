@@ -16,8 +16,9 @@ class PBRIFY_API UPBRifyLibrary : public UBlueprintFunctionLibrary
 public:
 	/**
 	 * Turns a texture into PBR maps (and a parallax material instance, if enabled) using the PBRify settings in Editor Preferences.
+	 * If its outputs already exist they're updated in place when bUpdateExisting is set, otherwise new copies are made.
 	 * On failure the result is empty and the reason is in the Output Log.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "PBRify")
-	static FPBRifyResult PBRifyTexture(UTexture2D* SourceTexture);
+	static FPBRifyResult PBRifyTexture(UTexture2D* SourceTexture, bool bUpdateExisting = true);
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Templates/Casts.h"
 
 namespace PBRifyAssetUtils
 {
@@ -11,21 +12,23 @@ namespace PBRifyAssetUtils
 	FString MakeUniqueAssetName(const FString& PackagePath, const FString& AssetName);
 
 	/**
-	 * Finds an existing T at PackagePath/InOutAssetName so it can be updated in place. If a different
-	 * kind of asset already uses that name, InOutAssetName is changed to a free one and null is returned.
+	 * Finds an existing T at PackagePath/InOutAssetName so it can be updated in place. If the name is
+	 * taken by a different kind of asset, or bAllowReuse is false, InOutAssetName is changed to a free
+	 * name and null is returned.
 	 */
 	template <typename T>
-	T* FindReusableAsset(const FString& PackagePath, FString& InOutAssetName)
+	T* FindReusableAsset(const FString& PackagePath, FString& InOutAssetName, bool bAllowReuse)
 	{
 		UObject* Existing = FindAsset(PackagePath, InOutAssetName);
-		if (T* Typed = Cast<T>(Existing))
+		if (!Existing)
+		{
+			return nullptr;
+		}
+		if (T* Typed = Cast<T>(Existing); Typed && bAllowReuse)
 		{
 			return Typed;
 		}
-		if (Existing)
-		{
-			InOutAssetName = MakeUniqueAssetName(PackagePath, InOutAssetName);
-		}
+		InOutAssetName = MakeUniqueAssetName(PackagePath, InOutAssetName);
 		return nullptr;
 	}
 }

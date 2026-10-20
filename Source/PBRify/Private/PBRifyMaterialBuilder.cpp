@@ -122,6 +122,14 @@ return lerp(PrevUV, CurUV, saturate(PrevGap / max(PrevGap - CurGap, 1e-4)));
 		Input.Input.Connect(OutputIndex, From);
 	}
 
+	/** Parallax UVs jump at height edges, which wrecks automatic mip selection. Take mips from the smooth, un-shifted UVs instead. */
+	void UseExplicitGradients(UMaterialExpressionTextureSample* Sample, UMaterialExpression* UVddx, UMaterialExpression* UVddy)
+	{
+		Sample->MipValueMode = TMVM_Derivative;
+		Sample->CoordinatesDX.Connect(0, UVddx);
+		Sample->CoordinatesDY.Connect(0, UVddy);
+	}
+
 	void ConnectProperty(UMaterial* Material, EMaterialProperty Property, UMaterialExpression* From, int32 OutputIndex = 0)
 	{
 		if (FExpressionInput* Input = Material->GetExpressionInputForProperty(Property))
@@ -178,14 +186,17 @@ return lerp(PrevUV, CurUV, saturate(PrevGap / max(PrevGap - CurGap, 1e-4)));
 		UMaterialExpressionTextureSampleParameter2D* BaseColor = AddTextureParameter<UMaterialExpressionTextureSampleParameter2D>(
 			Material, PBRifyMaterialParams::BaseColor, Textures.BaseColor, -700, -300);
 		BaseColor->Coordinates.Connect(0, Parallax);
+		UseExplicitGradients(BaseColor, UVddx, UVddy);
 
 		UMaterialExpressionTextureSampleParameter2D* Normal = AddTextureParameter<UMaterialExpressionTextureSampleParameter2D>(
 			Material, PBRifyMaterialParams::Normal, Textures.Normal, -700, 0);
 		Normal->Coordinates.Connect(0, Parallax);
+		UseExplicitGradients(Normal, UVddx, UVddy);
 
 		UMaterialExpressionTextureSampleParameter2D* ORM = AddTextureParameter<UMaterialExpressionTextureSampleParameter2D>(
 			Material, PBRifyMaterialParams::ORM, Textures.ORM, -700, 300);
 		ORM->Coordinates.Connect(0, Parallax);
+		UseExplicitGradients(ORM, UVddx, UVddy);
 
 		// Live tweakables
 		UMaterialExpressionScalarParameter* NormalStrength = AddScalarParameter(Material, PBRifyMaterialParams::NormalStrength, TEXT("Surface"), 1.0f, 4.0f, -450, 160);
@@ -287,6 +298,14 @@ UMaterial* PBRifyMaterialBuilder::FindOrCreateMasterMaterial(const FString& Mast
 		return nullptr;
 	}
 
+	// With Substrate enabled, new materials start with a Slab node wired into Front Material, which
+	// would override the classic inputs we connect below. Start from an empty graph instead.
+	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	if (FExpressionInput* FrontMaterial = Material->GetExpressionInputForProperty(MP_FrontMaterial))
+	{
+		FrontMaterial->Expression = nullptr;
+	}
+
 	BuildMasterGraph(Material, DefaultTextures);
 	UMaterialEditingLibrary::RecompileMaterial(Material);
 	Material->MarkPackageDirty();
@@ -295,10 +314,10 @@ UMaterial* PBRifyMaterialBuilder::FindOrCreateMasterMaterial(const FString& Mast
 
 UMaterialInstanceConstant* PBRifyMaterialBuilder::CreateOrUpdateInstance(
 	UMaterial* Master, const FString& PackagePath, const FString& DesiredName,
-	const FPBRifyResult& Textures, float ParallaxDepth, FText& OutError)
+	const FPBRifyResult& Textures, float ParallaxDepth, bool bUpdateExisting, FText& OutError)
 {
 	FString AssetName = DesiredName;
-	UMaterialInstanceConstant* Instance = PBRifyAssetUtils::FindReusableAsset<UMaterialInstanceConstant>(PackagePath, AssetName);
+	UMaterialInstanceConstant* Instance = PBRifyAssetUtils::FindReusableAsset<UMaterialInstanceConstant>(PackagePath, AssetName, bUpdateExisting);
 	if (Instance)
 	{
 		Instance->Modify();

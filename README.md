@@ -43,7 +43,7 @@ Written for Unreal Engine 5.8, and it should also work on recent 5.x versions.
 | `Tiling` | Repeat the texture |
 | `NormalStrength`, `AOStrength`, `RoughnessScale` | Surface punch |
 
-You can select several textures and PBRify them all at once. Re-running on the same texture updates the existing assets in place, so anything already using them keeps working.
+You can select several textures and PBRify them all at once. If the output assets already exist (say you're re-running with new settings), PBRify asks first. **Yes** updates them in place, so anything already using them keeps working. **No** leaves them alone and makes new copies.
 
 The shared master material is created once at `/Game/PBRify/M_PBRify_Master` (you can change that path in the settings).
 

@@ -13,6 +13,7 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "ImageCore.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "Misc/MessageDialog.h"
 #include "Misc/PackageName.h"
 #include "Misc/ScopedSlowTask.h"
 #include "Widgets/Notifications/SNotificationList.h"
@@ -100,13 +101,16 @@ namespace PBRifyGeneratorPrivate
 		return Data;
 	}
 
-	/** Creates the texture asset, or updates it in place if it already exists so materials using it keep working. */
+	/**
+	 * Creates the texture asset. If it already exists and bUpdateExisting is set, it's updated in place
+	 * so materials using it keep working; otherwise a new asset with a free name is made.
+	 */
 	UTexture2D* WriteTexture(
-		const FString& PackagePath, const FString& DesiredName, int32 Width, int32 Height,
+		const FString& PackagePath, const FString& DesiredName, bool bUpdateExisting, int32 Width, int32 Height,
 		ETextureSourceFormat Format, const uint8* Data, TextureCompressionSettings Compression, bool bSRGB, TextureGroup LODGroup)
 	{
 		FString AssetName = DesiredName;
-		UTexture2D* Texture = PBRifyAssetUtils::FindReusableAsset<UTexture2D>(PackagePath, AssetName);
+		UTexture2D* Texture = PBRifyAssetUtils::FindReusableAsset<UTexture2D>(PackagePath, AssetName, bUpdateExisting);
 		const bool bIsNew = Texture == nullptr;
 		if (bIsNew)
 		{
@@ -124,6 +128,11 @@ namespace PBRifyGeneratorPrivate
 		Texture->SRGB = bSRGB;
 		Texture->LODGroup = LODGroup;
 		Texture->MipGenSettings = TMGS_FromTextureGroup;
+		// Non-power-of-two textures get no mips (so they don't stream, and parallax shimmers in the
+		// distance). Let the engine stretch them; on a mesh it's invisible since the UVs cover the whole texture.
+		Texture->PowerOfTwoMode = FMath::IsPowerOfTwo(Width) && FMath::IsPowerOfTwo(Height)
+			? ETexturePowerOfTwoSetting::None
+			: ETexturePowerOfTwoSetting::StretchToPowerOfTwo;
 		Texture->PostEditChange();
 
 		if (bIsNew)
@@ -160,6 +169,95 @@ namespace PBRifyGeneratorPrivate
 		}
 		return true;
 	}
+
+	struct FOutputNames
+	{
+		explicit FOutputNames(const FString& BaseName)
+			: BaseColor(FString::Printf(TEXT("T_%s_BaseColor"), *BaseName))
+			, Normal(FString::Printf(TEXT("T_%s_Normal"), *BaseName))
+			, Height(FString::Printf(TEXT("T_%s_Height"), *BaseName))
+			, ORM(FString::Printf(TEXT("T_%s_ORM"), *BaseName))
+			, Material(FString::Printf(TEXT("MI_%s"), *BaseName))
+		{
+		}
+
+		FString BaseColor;
+		FString Normal;
+		FString Height;
+		FString ORM;
+		FString Material;
+	};
+
+	/** Names of the outputs for BaseName that already exist as assets in OutputPath. */
+	TArray<FString> FindExistingOutputs(const FString& OutputPath, const FString& BaseName, const UPBRifySettings& Settings)
+	{
+		const FOutputNames Names(BaseName);
+		TArray<FString> Candidates = { Names.BaseColor, Names.Normal, Names.Height, Names.ORM };
+		if (Settings.bCreateMaterial)
+		{
+			Candidates.Add(Names.Material);
+		}
+
+		TArray<FString> Existing;
+		for (const FString& Name : Candidates)
+		{
+			if (PBRifyAssetUtils::FindAsset(OutputPath, Name))
+			{
+				Existing.Add(Name);
+			}
+		}
+		return Existing;
+	}
+
+	/**
+	 * Decides, per source, whether to update outputs that already exist or make new copies, asking the
+	 * user when needed. Done up front so questions don't pop up halfway through the progress bar.
+	 */
+	TArray<bool> AskWhichToUpdate(const TArray<UTexture2D*>& Sources, const UPBRifySettings& Settings)
+	{
+		TArray<bool> UpdateExisting;
+		TSet<FString> OutputsInBatch;
+		TOptional<bool> AnswerForAll;
+		for (const UTexture2D* Source : Sources)
+		{
+			bool bUpdate = true;
+			FString OutputPath;
+			FText IgnoredError; // GeneratePBRAssets reports it properly later
+			if (Source && GetOutputPath(Source, Settings, OutputPath, IgnoredError))
+			{
+				const FString BaseName = GetBaseName(Source);
+				bool bAlreadyInBatch = false;
+				OutputsInBatch.Add(OutputPath / BaseName, &bAlreadyInBatch);
+
+				if (bAlreadyInBatch)
+				{
+					// e.g. "T_Brick" and "Brick" in one selection: don't let the second overwrite the first.
+					bUpdate = false;
+				}
+				else if (const TArray<FString> Existing = FindExistingOutputs(OutputPath, BaseName, Settings); !Existing.IsEmpty())
+				{
+					if (AnswerForAll.IsSet())
+					{
+						bUpdate = AnswerForAll.GetValue();
+					}
+					else
+					{
+						const EAppReturnType::Type Answer = FMessageDialog::Open(EAppMsgType::YesNoYesAllNoAll, FText::Format(
+							LOCTEXT("UpdateExisting", "These assets for {0} already exist:\n\n{1}\n\nUpdate them in place?\n\nYes: replace their contents (anything using them keeps working).\nNo: leave them alone and create new copies."),
+							FText::FromString(Source->GetName()),
+							FText::FromString(FString::Join(Existing, TEXT("\n")))));
+						bUpdate = Answer == EAppReturnType::Yes || Answer == EAppReturnType::YesAll;
+						if (Answer == EAppReturnType::YesAll || Answer == EAppReturnType::NoAll)
+						{
+							AnswerForAll = bUpdate;
+						}
+					}
+				}
+			}
+			UpdateExisting.Add(bUpdate);
+		}
+		return UpdateExisting;
+	}
 }
 
 TArray<UObject*> FPBRifyResult::GetAssets() const
@@ -180,7 +278,7 @@ TArray<UObject*> FPBRifyResult::GetAssets() const
 	return Assets;
 }
 
-bool PBRify::GeneratePBRAssets(UTexture2D* Source, const UPBRifySettings& Settings, FPBRifyResult& OutResult, FText& OutError)
+bool PBRify::GeneratePBRAssets(UTexture2D* Source, const UPBRifySettings& Settings, FPBRifyResult& OutResult, FText& OutError, bool bUpdateExisting)
 {
 	using namespace PBRifyGeneratorPrivate;
 
@@ -213,23 +311,23 @@ bool PBRify::GeneratePBRAssets(UTexture2D* Source, const UPBRifySettings& Settin
 	UE_LOG(LogPBRify, Log, TEXT("Generated %dx%d maps for %s in %.2fs"), Image.Width, Image.Height, *Source->GetName(), FPlatformTime::Seconds() - StartTime);
 
 	SlowTask.EnterProgressFrame(1.0f, LOCTEXT("Writing", "Creating textures"));
-	const FString BaseName = GetBaseName(Source);
+	const FOutputNames Names(GetBaseName(Source));
 	const int32 Width = Image.Width;
 	const int32 Height = Image.Height;
 
 	const TArray64<uint8> BaseColorData = ToBGRA(Maps.BaseColor);
-	OutResult.BaseColor = WriteTexture(OutputPath, FString::Printf(TEXT("T_%s_BaseColor"), *BaseName), Width, Height,
+	OutResult.BaseColor = WriteTexture(OutputPath, Names.BaseColor, bUpdateExisting, Width, Height,
 		TSF_BGRA8, BaseColorData.GetData(), TC_Default, /*bSRGB*/ true, TEXTUREGROUP_World);
 
 	const TArray64<uint8> NormalData = ToBGRA(Maps.Normal);
-	OutResult.Normal = WriteTexture(OutputPath, FString::Printf(TEXT("T_%s_Normal"), *BaseName), Width, Height,
+	OutResult.Normal = WriteTexture(OutputPath, Names.Normal, bUpdateExisting, Width, Height,
 		TSF_BGRA8, NormalData.GetData(), TC_Normalmap, /*bSRGB*/ false, TEXTUREGROUP_WorldNormalMap);
 
-	OutResult.Height = WriteTexture(OutputPath, FString::Printf(TEXT("T_%s_Height"), *BaseName), Width, Height,
+	OutResult.Height = WriteTexture(OutputPath, Names.Height, bUpdateExisting, Width, Height,
 		TSF_G16, reinterpret_cast<const uint8*>(Maps.Height.Pixels.data()), TC_Grayscale, /*bSRGB*/ false, TEXTUREGROUP_World);
 
 	const TArray64<uint8> ORMData = ToBGRA(Maps.ORM);
-	OutResult.ORM = WriteTexture(OutputPath, FString::Printf(TEXT("T_%s_ORM"), *BaseName), Width, Height,
+	OutResult.ORM = WriteTexture(OutputPath, Names.ORM, bUpdateExisting, Width, Height,
 		TSF_BGRA8, ORMData.GetData(), TC_Masks, /*bSRGB*/ false, TEXTUREGROUP_World);
 
 	SlowTask.EnterProgressFrame(0.5f, LOCTEXT("Material", "Building material"));
@@ -241,7 +339,7 @@ bool PBRify::GeneratePBRAssets(UTexture2D* Source, const UPBRifySettings& Settin
 			return false;
 		}
 		OutResult.Material = PBRifyMaterialBuilder::CreateOrUpdateInstance(
-			Master, OutputPath, FString::Printf(TEXT("MI_%s"), *BaseName), OutResult, Settings.ParallaxDepth, OutError);
+			Master, OutputPath, Names.Material, OutResult, Settings.ParallaxDepth, bUpdateExisting, OutError);
 		if (!OutResult.Material)
 		{
 			return false;
@@ -253,6 +351,7 @@ bool PBRify::GeneratePBRAssets(UTexture2D* Source, const UPBRifySettings& Settin
 void PBRify::GenerateForTextures(const TArray<UTexture2D*>& Sources)
 {
 	const UPBRifySettings& Settings = *GetDefault<UPBRifySettings>();
+	const TArray<bool> UpdateExisting = PBRifyGeneratorPrivate::AskWhichToUpdate(Sources, Settings);
 
 	TArray<UObject*> CreatedAssets;
 	TArray<FString> Failures;
@@ -260,7 +359,7 @@ void PBRify::GenerateForTextures(const TArray<UTexture2D*>& Sources)
 		FScopedSlowTask SlowTask(float(Sources.Num()), LOCTEXT("GeneratingAll", "PBRify: generating PBR materials..."));
 		SlowTask.MakeDialog(/*bShowCancelButton*/ true);
 
-		for (UTexture2D* Source : Sources)
+		for (int32 SourceIndex = 0; SourceIndex < Sources.Num(); ++SourceIndex)
 		{
 			if (SlowTask.ShouldCancel())
 			{
@@ -268,9 +367,10 @@ void PBRify::GenerateForTextures(const TArray<UTexture2D*>& Sources)
 			}
 			SlowTask.EnterProgressFrame(1.0f);
 
+			UTexture2D* Source = Sources[SourceIndex];
 			FPBRifyResult Result;
 			FText Error;
-			if (GeneratePBRAssets(Source, Settings, Result, Error))
+			if (GeneratePBRAssets(Source, Settings, Result, Error, UpdateExisting[SourceIndex]))
 			{
 				CreatedAssets.Append(Result.GetAssets());
 			}

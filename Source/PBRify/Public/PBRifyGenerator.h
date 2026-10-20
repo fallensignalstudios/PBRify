@@ -38,10 +38,14 @@ namespace PBRify
 {
 	/**
 	 * Generates base color, normal, height and ORM textures from Source (plus a parallax material
-	 * instance if enabled), next to the source asset. Existing outputs with the same names are updated in place.
+	 * instance if enabled), next to the source asset. If outputs with the same names already exist they
+	 * are updated in place when bUpdateExisting is set, otherwise new assets with free names are made.
 	 */
-	PBRIFY_API bool GeneratePBRAssets(UTexture2D* Source, const UPBRifySettings& Settings, FPBRifyResult& OutResult, FText& OutError);
+	PBRIFY_API bool GeneratePBRAssets(UTexture2D* Source, const UPBRifySettings& Settings, FPBRifyResult& OutResult, FText& OutError, bool bUpdateExisting = true);
 
-	/** Runs GeneratePBRAssets on each texture with a progress dialog, then shows the results in the Content Browser. */
+	/**
+	 * Runs GeneratePBRAssets on each texture with a progress dialog, then shows the results in the
+	 * Content Browser. Asks before touching outputs that already exist.
+	 */
 	PBRIFY_API void GenerateForTextures(const TArray<UTexture2D*>& Sources);
 }
